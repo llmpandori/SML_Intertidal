@@ -54,3 +54,5 @@ ggplot(
   scale_y_continuous(labels = scales::label_number(suffix = " M", scale = 1e-6)) +
   theme(axis.text.x = element_text(hjust = 1, angle = 45))
 
+# load a bunch of files
+

@@ -351,6 +351,29 @@ seaweed.df.list<- lapply(seaweed.df.list, setNames, nm = sz.names) %>% rbindlist
 # output invert data
 write_csv(seaweed.df.list, 'seaweed.long2020.csv')
 
+##### category data (made up by LP July 2022) #####
+# legacy data col order: 
+# Year Transect Level Replicate Data_Taken Organism Category
 
+# make list of transect data files
+data.list <- list.files(pattern="Transect", all.files=TRUE)
 
+# read in data (sheet 4)
+cat_data_list <- lapply(data.list, read_xlsx, sheet=4, skip = 0)
 
+# tidy list of df's
+cat_data_list <- 
+  # put notes column after ID cols 1-5
+  lapply(cat_data_list, relocate, c(1:5, Notes)) %>%
+  # pivot longer so spp are vertical
+  lapply(pivot_longer, cols=!1:6, 
+         names_to="Organism", values_to="Category") %>%
+  rbindlist %>%
+  # move notes column to end
+  relocate(-Notes) %>%
+  # rename cols to match legacy data
+  rename(Year = YEAR, Transect = TRANSECT, Level = LEVEL, Replicate = REPLICATE, 
+         Data_Taken = `DATA TAKEN?`)
+
+# write output
+write_csv(cat_data_list, 'cat_long.csv')

@@ -17,15 +17,14 @@ assembled_algae <- read_csv(paste0(assembled,'SML_Algae_Length.csv'),
                             col_types = cols(Year = col_double(), 
                             Transect = col_double(), Level = col_double(), 
                             Replicate = col_double(), Asco_maxlength = col_double(), 
-                            Asco_maxbladders = col_double())) %>%
-                    filter(assembled_algae, !Data_taken %in% c('no', 'yes', NA)))
-
+                            Asco_maxbladders = col_double())) 
 # get data to add
 new_algae1 <- read_csv(paste0(to_add, 'seaweed.long.csv'),
                        col_types = cols(Year = col_double(), 
                                         Transect = col_double(), Level = col_double(), 
                                         Replicate = col_double(), Asco_maxlength = col_double(), 
                                         Asco_maxbladders = col_double()))
+
 new_algae2 <- read_csv(paste0(to_add, 'seaweed.long2020.csv'),
                        col_types = cols(Year = col_double(), 
                                         Transect = col_double(), Level = col_double(), 
@@ -34,7 +33,9 @@ new_algae2 <- read_csv(paste0(to_add, 'seaweed.long2020.csv'),
 
 final_algae <- full_join(assembled_algae, full_join(new_algae1, new_algae2))
 
-write_csv(final_algae, paste0(new_assembled, 'SML_Algae_Length.csv'))
+write_csv(final_algae, paste0(new_assembled, 'sml_intertidal_algae_length_2021.csv'))
+
+remove(new_algae1, new_algae2, final_algae, assembled_algae)
 
 ##### Percent Cover - append new data from 2021 #####
 new_cover <- read_csv(paste0(to_add, 'percent_cover_data_2021.csv'))
@@ -46,14 +47,50 @@ assembled_cover <- read.delim(paste0(assembled,'SML_Intertidal_Percent_Cover'),
 new_assembled_cover <- full_join(new_cover, assembled_cover)
 
 # save output
-write_csv(new_assembled_cover, paste0(new_assembled, 'SML_Intertidal_Percent_Cover.csv'))
+write_csv(new_assembled_cover, paste0(new_assembled, 'sml_intertidal_percent_cover_2021.csv'))
 
-##### 
+remove(new_cover, new_assembled_cover, assembled_cover)
 
+##### Count data - append new data from 2021 #####
+new_count <- read_csv(paste0(to_add, 'counts_data_2021.csv'),
+                      col_types = cols(Replicate = col_character()))
 
+assembled_count <- read.delim(paste0(assembled, 'SML_Intertidal_Counts'), sep = ',') %>%
+  select(-X) %>%
+  mutate(Count = as.numeric(Count))
 
+new_assembled_count <- full_join(new_count, assembled_count)
 
+write_csv(new_assembled_count, paste0(new_assembled, 'sml_intertidal_count_2021.csv'))
 
+remove(new_count, assembled_count, new_assembled_count)
+##### Size data - append new data from 2021 #####
 
+new_size <- read_csv(paste0(to_add, 'counts_data_2021.csv'),
+                     col_types = cols(Replicate = col_character(),
+                                      Count = col_character(
+                                      ))) 
+
+assembled_size <- read.delim(paste0(assembled, 'SML_Intertidal_Counts'), sep = ',') %>%
+  select(-X)
+
+new_assembled_size <- full_join(new_size, assembled_size)
+
+write_csv(new_assembled_size, paste0(new_assembled, 'sml_intertidal_size_2021.csv'))
+
+remove(new_size, assembled_size, new_assembled_size)
+
+##### Category data - append new data from 2021 ####
+new_category <- read_csv(paste0(to_add, 'cat_long.csv'),
+                         col_types = cols(Replicate = col_character(),
+                                          Data_Taken = col_character())) %>%
+  rename(Data_taken = Data_Taken)
+
+assembled_category <- read.delim(paste0(assembled, 'SML_Intertidal_Categories'), sep = ',') %>%
+  select(-X)
+
+new_assembled_category <- full_join(new_category, assembled_category)
+
+write_csv(new_assembled_category, paste0(new_assembled, 'sml_intertidal_categories_2021.csv'))
 
                           
