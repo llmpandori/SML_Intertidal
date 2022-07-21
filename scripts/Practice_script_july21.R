@@ -41,9 +41,16 @@ head(count_data2)
 library(ggplot2)
 
 # Barplot
+count_data2 <- count_data2 %>%
+  filter(Count > 10000)
+
 ggplot(
   # data we want to plot
   count_data2,
   # tell R what x and y values are
   aes(x = Organism, y = Count)) + 
-  geom_bar(stat = "identity")
+  geom_bar(stat = "identity") + 
+  theme_classic() + 
+  scale_y_continuous(labels = scales::label_number(suffix = " M", scale = 1e-6)) +
+  theme(axis.text.x = element_text(hjust = 1, angle = 45))
+
