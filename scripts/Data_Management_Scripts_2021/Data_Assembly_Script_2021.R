@@ -16,7 +16,15 @@ to_add <- paste0(getwd(),'/data/Data_Management_2021/Output_2021/')
 ##### algae length - append new data from 2020 and 2021 #####
 
 # load last year data
-assembled_algae <- read_csv(paste0(assembled,'sw_sz_clean.csv')) 
+assembled_algae <- read_csv(paste0(assembled,'sw_sz_clean.csv')) %>%
+  remove_empty(which = c('rows', 'cols')) %>%
+  mutate(Fucus_max_species = case_when(Fucus_max_species == 'Fucus spp.' ~ 'SP',
+                                       Fucus_max_species == 'Fucus distichus' ~ 'FD',
+                                       Fucus_max_species == 'Fucus spiralis' ~ 'FS',
+                                       Fucus_max_species == 'Fucus vesiculosus' ~ 'FV',
+                                       substr(Fucus_max_species,1,2) %in% c('nd', 'sp', 've') ~ 'SP',
+                                       ))
+  
 # get data to add
 new_algae1 <- read_csv(paste0(to_add, 'seaweed.long.csv')) %>%
   mutate(
@@ -25,15 +33,22 @@ new_algae1 <- read_csv(paste0(to_add, 'seaweed.long.csv')) %>%
     # consistent fucus spp names
     Fucus_max_species = case_when(Fucus_max_species  == 'Fspp.' ~ 'SP',
                                        Fucus_max_species == 'FSPP' ~ 'SP',
-                                       Fucus_max_species == 'Spp.' ~ 'SP'))
+                                       Fucus_max_species == 'Spp.' ~ 'SP'),
+    across(.cols = c(Fucus_maxlength, Asco_maxlength, Asco_maxbladders),
+           as.numeric))
 
 new_algae2 <- read_csv(paste0(to_add, 'seaweed.long2020.csv')) %>%
   mutate(
     # make any ND's into NA's
-    across(.cols = everything(), na_if, 'ND')
-  )
+    across(.cols = everything(), na_if, 'ND'),
+    Fucus_max_species = case_when(Fucus_max_species == 'FSP' ~ 'SP'),
+    across(.cols = c(Fucus_maxlength, Asco_maxlength, Asco_maxbladders),
+           as.numeric))
 
-final_algae <- full_join(assembled_algae, full_join(new_algae1, new_algae2))
+final_algae <- full_join(assembled_algae, full_join(new_algae1, new_algae2)) %>%
+  remove_empty(which = c('rows', 'cols')) %>%
+  mutate(Data_taken = case_when(substr(Data_taken,1,1) == 'y' ~ 'Yes',
+                                substr(Data_taken,1,1) == 'n' ~ 'No'))
 
 write_csv(final_algae, paste0(new_assembled, 'sml_intertidal_algae_length_2021.csv'))
 
