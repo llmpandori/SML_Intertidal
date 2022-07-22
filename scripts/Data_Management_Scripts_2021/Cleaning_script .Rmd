@@ -1,0 +1,884 @@
+---
+title: "Intertidal_Cleaning_Script"
+author: "An T Nguyen"
+date: "June 15, 2018"
+output: html_document
+---
+##A few words in lieu of introduction 
+
+This document and script was written in the summer of 2018 by An T Nguyen, EDI Enviromental Data Fellow at Shoals. I have peppered the script with documentation as best I can, but have also tried to optimize the script for fewest steps. (I however did not write any functions - potential to optimize right here.) In the very possible case that something makes no sense, contact me at annguyen@bennington.edu (through December 2018) or an.thai.nguyen.38@gmail.com. 
+
+##Some terms
+
+"Core" columns are the first five columns found in datasheets, original or processed, mostly but not always in this order: Year, Transect, Level, Replicate, Data_taken. Together they represent the information that uniquely identify one row of data, and consequently are kept mostly intact. "Quadcodes," when present (before 2009) are meant to be read as follows: "t05l09r2" translates to "transect 05, level 09, replicate 02." I have unpacked Quadcodes to populate respective columns. 
+
+Priority and non-priority are designated by Hal Weeks according to length of time series data available in different transects. In 2007-2009 Hal compiled all 1982-2006 data for Percent cover, Sizes, and Counts for the priority transects; these are used in this script, when available, in place of the original datasheets.
+
+Thus, three sections in the cleaning script (dealing with Percent cover, Counts, and Sizes data respectively) are further divided to three smaller sections to deal with the three groups of transects listed below. Categories data, having no compilation of their own, is dealt with a little differently.
+
+- Priority transects: 02, 05, 07, 15, 20, 22, 24, 26, 28
+
+- Non-priority transets: 01, 08, 10, 11, 13, 14, 17, 18, 19, 21, 23, 25, 27
+
+- Post-2008, IEI (intertidal ecology interns) mostly recorded these transects: 05, 07, 15, 20, 26, with a couple 28s thrown in in 2009/2010
+
+The data has gone through many back and forth rounds of preliminary cleaning in Excel, interspersed with rounds of quality checking in R. Therefore the data imported into this script is mostly free of one-off inconsistencies or typos that is not worth correcting by script. Most Excel edits didn't change actual data values, although I made some that did; see the Cleaning Log for more details. For truly "original" unchanged datasheets, go to the corresponding folders in the hard drive/UNH Box folder. 
+
+-----------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------
+
+#Setup
+
+```{r setup, include=FALSE}
+library(readxl)
+library(reshape2)
+library(dplyr)
+library(data.table)
+library(stringr)
+library(tidyr)
+library(rstudioapi)
+library(magrittr)
+
+# Getting the path of the current script and set working directory to corresponding path. This is to ensure compatibility across machines.
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path))
+```
+
+---------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------
+
+#Percent Cover
+
+```{r PC_post, message=FALSE}
+#At this point post-2008 data imported into R has the same number of core ID columns and a varying number of "organism" columns. No empty first rows or meaningless rows without data.
+#set working directory. post 2008 is a folder inside the working directory, containing all post-2008 datasheets.
+setwd("~/Desktop/SML intertidal")
+
+#list all file names matching "Intertidal" pattern
+data.list <- list.files(path=getwd(), pattern="Transect", all.files=TRUE)
+
+#read first sheets (percent_cover) off of all files in data.list. result is a list of data frames
+pc.df.list <- lapply(data.list, read_xlsx, sheet=1)
+
+#"melting" each data frame into long format. The core five columns are kept as "ID" variables. "organism" column headers are melted into a "variable" column, while corresponding percent_cover values are melted into a "value" column.
+pc.long <- lapply(pc.df.list, melt, id.vars=1:5)
+
+#At this point each data frame in pc.long has _exactly_ 7 columns. 5 ID columns as mentioned above, plus "variable," and "value."
+#so now we bind every data frame together by column index.
+pc.post <- pc.long %>%
+  rbindlist()
+```
+
+##Percent cover, Hal's compilations. priority transects pre-2008
+
+## IMPORTANT: for 2018-2020, did not run lines 72-97
+```{r PC_pri_pre}
+pc.early <- read_excel("./Hal_compilations/FMBETransectData(PercentCover)(Sort26March09).xls", col_types = "text")[, -2] %>% #read in the compilation file, minus the second column which is QUADCODE
+  melt(id.vars=1:5) #melt to long format
+```
+
+##Percent cover, leftovers, non-priority transects pre 2008
+
+```{r PC_non_pri}
+run this chunk altogether to avoid setwd() resetting
+setwd("./leftover_transects")
+leftovers <- list.files(path = getwd(), pattern = "Intertidal")
+
+pc.left <-
+  lapply(lapply(leftovers, read_excel, sheet = 1), melt, id.vars = 1:2) %>% #read all files, melt each to long format
+  rbindlist() %>% #bind all together
+  tidyr::drop_na(YEAR, QUADCODE) %>% #drop NAs in Year and Quadcode columns. this shouldn't drop any actual data
+  mutate(
+    Transect = substring(QUADCODE, 2, 3),
+   Level = substring(QUADCODE, 5, 6),
+Replicate = substring(QUADCODE, 8, 8),
+    Data_taken = NA
+  ) %>% #create new core columns from Quadcode. Data_taken is kept NULL.
+  select(1, 5:8, 3:4) #reorder and select columns to keep
+```
+
+##Percent cover, joining three chunks of datasheets together && creating a summary table
+
+```{r PC_final}
+pc.bound <-
+  rbindlist(list(pc.post), use.names = FALSE) %>% #binding the three sections together
+  setNames(
+    nm = c(
+      "Year",
+      "Transect",
+      "Level",
+      "Replicate",
+      "Data_taken",
+      "Organism",
+      "Percent_cover"
+    )
+  ) %>% #rename all columns
+  drop_na(Year, Transect, Level, Replicate, Organism) %>% #dropping rows with NAs in columns where doing so shouldn't drop any actual data
+  mutate(
+    Year = as.numeric(Year),
+    Transect = as.numeric(Transect),
+    Level = as.numeric(Level)
+  ) %>% #making numeric columns
+  mutate(Data_taken = ifelse(
+    grepl("y|Just", Data_taken, ignore.case = TRUE) == TRUE,
+    "yes",
+    ifelse(
+      grepl("n", Data_taken, ignore.case = TRUE) == TRUE,
+      "no",
+      Data_taken
+    )
+  )) %>% #standardizing Data_taken codes
+  mutate(Percent_cover = ifelse(grepl("nd|plant|trace", Percent_cover, ignore.case = TRUE)==TRUE & grepl("Notes|Z|X|Quality", Organism, ignore.case = TRUE) == FALSE, "p", Percent_cover))
+```
+
+
+##Percent_cover, non-numeric and near-numeric values
+
+```{r}
+#near-numeric value look like this: "<1" or "28%" or "~34". We want to ideally get rid of these non-number symbols, but only in primary records and not in any kind of "notes" columns. Otherwise, a note that reads "black zone sp= 80% Cyanobacteria plus 5% Verrucaria" will be reduced to "805." Sometimes these notes columns are titled "Z1" or "X1," so we avoid those as well.
+pc.bound %<>%
+  mutate(pc1 = ifelse(
+    grepl("Notes|Z|X|Quality", Organism, ignore.case = TRUE) == FALSE &
+      grepl("[^0-9.]", Percent_cover) == TRUE
+    & grepl("p", Percent_cover) == FALSE,
+    gsub("[^0-9.]", "", Percent_cover),
+    Percent_cover
+  ))
+
+pc.diff <- pc.bound %>% filter(Percent_cover != pc1)
+```
+
+##Percent_cover, NAs evaluation
+
+```{r}
+#NAs evaluation. Goal is to tell which NAs, equivalent to a blank cell, should be a 0 instead (data was taken for that replicate but there were none of that organism observed) or should remain an NA (data was not taken for that replicate)
+#first we essentially reconstruct a "row" in original datasheets and compute the sum of the row. note that we are forcing values in percent_cover that are still non-numeric after above process to values of exactly 0.3, to be able to sum
+pc.sum <- pc.bound %>%
+  dplyr::mutate(Percent_cover = ifelse(grepl("[^0-9.]", Percent_cover) == TRUE, 0.3, Percent_cover)) %>%
+  dplyr::group_by(Year, Transect, Level, Replicate) %>%
+  dplyr::summarise(pc_row_sum = sum(as.numeric(Percent_cover), na.rm = TRUE))
+
+#joining the just computed sum to big dataframe. If Percent_cover contained a value, keep it intact. If Percent_cover was a NA, and either Data_taken was "yes" or the row_sum is not 0, then sub with a 0. Otherwise, keep NA.
+pc.bound <-
+  left_join(pc.bound, pc.sum, by = c("Year", "Transect", "Level", "Replicate")) %>%
+  mutate(pc2 = ifelse(
+    is.na(pc1) == FALSE & pc1 != "",
+    pc1,
+    ifelse(Data_taken == "yes" | pc_row_sum > 0.001 , 0, NA)
+  )) %>%
+  mutate(Data_taken = ifelse(
+    is.na(Data_taken) == FALSE,
+    Data_taken,
+    ifelse(pc_row_sum > 0.001, "yes", "no")
+  )) %>% # retroactively fill in "yes" or "no" where Data_taken was originally NA, based on row sums 
+    select(1:6, 10) %>%
+  dplyr::rename(Percent_cover=pc2)
+```
+
+# creating new all_organisms_list for percent cover 
+## STOPPED HERE 
+
+
+pc.unique=pc.bound %>%
+  distinct(Organism)
+  
+write.csv(pc.unique,"pc.unique.csv")
+
+
+#Percent_cover, taxa match & consolidation
+Name matching can potentially come earlier in the sequence. 
+```{r}
+pc.org <-
+  read_excel("./all_organism_list.xlsx",
+             sheet = 1,
+             skip = 1) %>% 
+  drop_na("preferred_code")
+
+#VERY important note: if deciding to use this code for future uses. make sure to generate a new species list, because if this snippet doesn't find a matching "original_code", it will instead fill in a NA and NAs get dropped at the very end.
+pc.final <- pc.bound %>%
+  left_join(pc.org[, 1:2], by = c("Organism" = "original_code")) %>%
+  mutate(Organism=ifelse(is.na(preferred_code)==FALSE, preferred_code, NA)) %>%
+  select(1:7) %>%
+  drop_na(Organism) %>%
+  group_by(Year, Transect, Level, Replicate, Data_taken, Organism) %>% #group by all variables
+  dplyr::summarise(Percent_cover=max(Percent_cover)) # take maximum value if there are two or more to choose from. shouldn't affect "p" values
+
+pc.notes <- pc.bound %>%
+  filter(grepl("Note|Quality|Total", Organism) == TRUE, is.na(Percent_cover)==FALSE, Percent_cover != 0) %>%
+  mutate(Source="percent_cover")
+```
+
+
+##Percent cover, writing to files
+
+```{r PC_write}
+#writing to csv file
+write.csv(pc.final %>% filter(grepl("Note|Quality|Total", Organism) == FALSE), file="percent_cover_data.csv", row.names = FALSE)
+```
+
+-----------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+
+#Counts
+Referring to counts of invertebrates. Generally the third sheet in Excel files. Very similar to percent cover. some steps are nested for brevity. note that manipulations on this set do not end until after "size class" data. don't write to file yet.
+
+##counts, all data post 2008
+
+```{r ct_post, message=FALSE}
+#set working directory
+setwd("./post_2008")
+
+ct.post <- lapply(lapply(data.list, read_excel, sheet=3), melt, id.vars=1:5) %>%
+  rbindlist()
+```
+### 
+### copied from pc above -- trouble shooting (234-256)
+###
+
+current_path = rstudioapi::getActiveDocumentContext()$path 
+setwd(dirname(current_path))
+
+
+setwd("~/Desktop/SML intertidal")
+
+#list all file names matching "Intertidal" pattern
+data.list <- list.files(path=getwd(), pattern="Transect", all.files=TRUE)
+
+#read first sheets (percent_cover) off of all files in data.list. result is a list of data frames
+ct.df.list <- lapply(data.list, read_xlsx, sheet=3)
+
+#"melting" each data frame into long format. The core five columns are kept as "ID" variables. "organism" column headers are melted into a "variable" column, while corresponding percent_cover values are melted into a "value" column.
+ct.long <- lapply(ct.df.list, melt, id.vars=1:5)
+
+#At this point each data frame in pc.long has _exactly_ 7 columns. 5 ID columns as mentioned above, plus "variable," and "value."
+#so now we bind every data frame together by column index.
+ct.post <- ct.long %>%
+  rbindlist()
+  
+## IMPORTANT: for post 2018, do not run 260-282
+##counts, priority transects pre 2008
+
+```{r ct_pri_pre, message=FALSE, warning=TRUE, include=FALSE}
+ct.early <- read_excel("./Hal_compilations/AllFMBETransectData(Counts)(sort19March09)(hw).xls", col_types = "text")[, -2] %>%
+  melt(id.vars=1:5)
+```
+
+
+##counts, leftovers, non-priority transects pre 2008
+
+```{r ct_non_pri}
+#run this chunk altogether to avoid setwd() resetting
+setwd("./leftover_transects")
+
+ct.left <-
+  lapply(lapply(leftovers, read_excel, sheet = 3), melt, id.vars = 1:2) %>%
+  rbindlist() %>%
+  mutate(
+    Transect = substring(`QUAD CODE`, 2, 3),
+    Level = substring(`QUAD CODE`, 5, 6),
+    Replicate = substring(`QUAD CODE`, 8, 9),
+    Data_taken = NA
+  ) %>%
+  select(1, 5:8, 3:4)
+```
+
+
+#counts, joining, summarizing
+
+```{r ct_final}
+ct.bound <-
+  rbindlist(list(ct.post), use.names = FALSE) %>% #binding the three sections together
+  setNames(nm = c(
+    "Year",
+    "Transect",
+    "Level",
+    "Replicate",
+    "Data_taken",
+    "Organism",
+    "Count"
+  )) %>% #rename all columns
+  drop_na(Year, Transect, Level, Replicate, Organism) %>% #dropping rows with NAs in columns where doing so shouldn't drop any actual data
+  mutate(
+    Year = as.numeric(Year),
+    Transect = as.numeric(Transect),
+    Level = as.numeric(Level)
+  ) %>%
+  mutate(Data_taken = ifelse(
+    grepl("y", Data_taken, ignore.case = TRUE) == TRUE,
+    "yes",
+    ifelse(
+      grepl("n", Data_taken, ignore.case = TRUE) == TRUE,
+      "no",
+      Data_taken
+    )
+  )) %>% #standardizing Data_taken codes
+  mutate(Count = ifelse(grepl("nd|x", Count)==TRUE & grepl("Notes|Quality|Total", Organism, ignore.case= TRUE ) == FALSE, "p", Count))
+```
+
+##counts, non- and near-numeric values
+
+```{r}
+#near-numeric value look like this: "<1" or "28%" or "~34". We want to ideally get rid of these non-number symbols, but only in primary records and not in any kind of "notes" columns. Otherwise, a note that reads "black zone sp= 80% Cyanobacteria plus 5% Verrucaria" will be reduced to "805."
+ct.bound %<>%
+  mutate(ct1 = ifelse(
+    grepl("Notes|Z|X", Organism, ignore.case = TRUE) == FALSE &
+      grepl("[^0-9.]", Count) == TRUE &
+      grepl("egg|p", Count) == FALSE,
+    gsub("[^0-9.]", "", Count),
+    Count
+  ))
+
+ct.diff <- ct.bound %>% filter(Count != ct1)
+```
+
+##counts, NAs evaluation
+
+```{r}
+#NAs evaluation
+ct.sum <- ct.bound %>%
+  mutate(Count = ifelse(grepl("[^0-9.]", Count) == TRUE, 0.3, Count)) %>%
+  dplyr::group_by(Year, Transect, Level, Replicate) %>%
+  dplyr::summarise(ct_row_sum = sum(as.numeric(Count), na.rm = TRUE)) %>%
+  left_join(pc.sum, by = c("Year", "Transect", "Level", "Replicate"))
+
+ct.bound %<>%
+  left_join(ct.sum, by = c("Year", "Transect", "Level", "Replicate")) %>%
+  mutate(ct2 = ifelse(
+    is.na(ct1) == FALSE & ct1 != "",
+    ct1,
+    ifelse(
+      Data_taken == "yes" |
+        ct_row_sum > 0.0001 | pc_row_sum > 0.0001, 0, NA
+    )
+  )) %>%
+  mutate(Data_taken = ifelse(
+    is.na(Data_taken) == FALSE,
+    Data_taken,
+    ifelse(pc_row_sum > 0.001, "yes", "no")
+  )) %>% # retroactively fill in "yes" or "no" where Data_taken was originally NA, based on row sums 
+  select(1:6, 11) %>%
+  dplyr::rename(Count = ct2)
+```
+
+##Counts, taxa match & consolidation
+
+```{r}
+ct.org <- read_excel("./all_organism_list.xlsx", sheet=3, skip = 1)
+
+ct.bound %<>% 
+  left_join(ct.org[, 1:2], by = c("Organism" = "original_code")) %>%
+  mutate(Organism=ifelse(is.na(preferred_code)==FALSE, preferred_code, NA)) %>%
+  select(1:7) %>%
+  drop_na(Organism)
+
+ct.notes <- ct.bound %>%
+  filter(grepl("Note|Quality|Total", Organism) == TRUE, is.na(Count)==FALSE, Count != 0) %>%
+  mutate(Source="counts")
+```
+
+--------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------
+
+#Size class data 
+Referring to counts split into different size classes for barnacles (Semibalanus), mussels (blue, Mytilus and chocolate, Modiolus) and snails (Nucella). Different data format, so different procedures entirely.
+
+##sizes, all post 2008 transects
+
+```{r sz_names}
+#defining names to use later
+sz.names <- c(
+"Year",
+"Transect",
+"Level",
+"Replicate",
+"Data_taken",
+"Semibalanus balanoides_0-2",
+"Semibalanus balanoides_3-5",
+"Semibalanus balanoides_>5",
+"Mytilus edulis_0-5",
+"Mytilus edulis_6-10",
+"Mytilus edulis_11-20",
+"Mytilus edulis_21-30",
+"Mytilus edulis_>30",
+"Mytilus edulis_>30",
+"Modiolus modiolus_0-5",
+"Modiolus modiolus_6-10",
+"Modiolus modiolus_11-20",
+"Modiolus modiolus_21-30",
+"Modiolus modiolus_>30",
+"Modiolus modiolus_>30",
+"Nucella lapillus_0-10",
+"Nucella lapillus_11-20",
+"Nucella lapillus_>20"
+)
+```
+
+##sizes post 2008 continued
+
+```{r sz_post}
+#set working directory
+setwd("./post_2008")
+setwd("~/Desktop/SML intertidal")
+
+sz.df.list <-
+  lapply(lapply(data.list, read_excel, sheet = 2, skip = 1), #read in data. skipping first row because we want only one header row, and it's better to use the size classes. Now we have a list of data frames
+         '[', ,-c(6:9)) #subsetting each data frame in list, dropping columns 6 through 9, which have FUCUS and ASCOPHYLLUM.
+
+sz.post <-
+  lapply(
+    lapply(sz.df.list, setNames, nm = sz.names), # renaming all columns according to above
+    melt,
+    id.vars = 1:5,
+    value.name = "Count"
+  ) %>% # melting all dataframes to long format
+  rbindlist %>% # binding them together
+  transform(VAR = colsplit(variable, "_", c("Organism", "Size_class"))) %>% #splitting column "variable" in half
+  select(1:5, 8:9, 7) # select and reorder columns
+```
+
+##sizes, pre 2008, priority transects
+
+```{r sz_pri_pre, message=FALSE, warning=TRUE}
+#mostly the same procedures as before
+sz.early <-
+  read_excel("./Hal_compilations/AllFMBETransectData(Sizes)(Sort17Mar09)(hw).xls",
+             skip = 1)[, -c(2, 7:10)] %>%
+  setNames(nm = c(sz.names, "Quality", "Notes", "Notes", "Notes")) %>%
+  melt(id.vars = 1:5, value.name = "Count") %>%
+  transform(VAR = colsplit(variable, "_", c("Organism", "Size_class"))) %>%
+  select(1:5, 8:9, 7)
+```
+
+##sizes, leftovers, non-priority transects pre-2009
+
+```{r sz_names_18}
+#another list of names for pre-2009 transects
+sz.names.18 <- c(
+"Year",
+"QUADCODE",
+"Modiolus modiolus_0-5",
+"Modiolus modiolus_6-10",
+"Modiolus modiolus_11-20",
+"Modiolus modiolus_21-30",
+"Modiolus modiolus_>30",
+"Mytilus edulis_0-5",
+"Mytilus edulis_6-10",
+"Mytilus edulis_11-20",
+"Mytilus edulis_21-30",
+"Mytilus edulis_>30",
+"Nucella lapillus_0-10",
+"Nucella lapillus_11-20",
+"Nucella lapillus_>20",
+"Semibalanus balanoides_0-2",
+"Semibalanus balanoides_3-5",
+"Semibalanus balanoides_>5"
+)
+```
+
+```{r sz_non_pri}
+#run this chunk altogether to avoid setwd() resetting
+setwd(paste(getwd(), "/leftover_transects", sep=""))
+
+sz.left <- lapply(lapply(leftovers, read_excel, sheet = 2, skip = 1), `[`,-c(3:6))
+
+sz.left.long <-
+  lapply(lapply(leftovers, read_excel, sheet = 2, skip = 1), `[`, -c(3:6)) %>% # remove FUCUS and ASCOPHYLLUM columns (all sheets)
+  lapply(function(x)
+    if (ncol(x) == 22) {
+      return(x[,-c(13, 17:22)])
+    } else {
+      return(x)
+    }) %>% # remove LARGEST and empty columns (2008 only)
+  lapply(function(x)
+    if (ncol(x) == 18) {
+      if (colnames(x[, 18]) == ">5mm") {
+        setNames(x, nm = sz.names.18)
+      }
+      else if (colnames(x[, 18]) == "X__5") {
+        setNames(x,
+                 nm = c(sz.names.18[-c(13:15)], "Notes1", "Notes2", "Notes3"))}
+    } else if (ncol(x) == 15) {
+      setNames(x, nm = sz.names.18[-c(13:15)])
+    } else {
+      return(x)
+    }) %>% # rename all sheets. some have 18 and some have 15 (no Nucella recorded) columns
+  lapply(melt, id.vars = 1:2, value.name = "Count") %>% # transform all sheets to long format of exactly 4 columns
+  rbindlist %>% # bind all sheets together since they now all have the same number of columns
+  transform(VAR = colsplit(variable, "_", c("Organism", "Size_class"))) %>% # split string into two variables
+  mutate(
+    Transect = substring(`QUADCODE`, 2, 3),
+    Level = substring(`QUADCODE`, 5, 6),
+    Replicate = substring(`QUADCODE`, 8, 9),
+    Data_taken = NA
+  ) %>% # split QUADCODE string into Transect, Level, and Replicate values
+  select(1, 7:10, 5:6, 4) #reorder and drop columns
+```
+
+
+#sizes, joining and summarizing
+
+```{r sz_final}
+sz.bound <- rbind(sz.left.long, sz.early, sz.post) %>%
+  tidyr::drop_na(Year, Transect, Level, Replicate, VAR.Organism) %>% # drop NA values in columns where doing so would not drop any actual data, assuming every "core" column except for Data_taken is filled out
+  filter(!(VAR.Organism %in% c("", " "))) %>% #filter out rows where Organism is empty
+  mutate(
+    Year = as.numeric(Year),
+    Transect = as.numeric(Transect),
+    Level = as.numeric(Level)
+  ) %>%
+  mutate(Data_taken = ifelse(
+    grepl("y", Data_taken, ignore.case = TRUE) == TRUE,
+    "yes",
+    ifelse(
+      grepl("n", Data_taken, ignore.case = TRUE) == TRUE,
+      "no",
+      Data_taken
+    )
+  )) %>% #standardizing Data_taken codes
+  mutate(Count = ifelse(grepl("nd|md", Count)==TRUE & grepl("Notes|Quality|Total", VAR.Organism, ignore.case= TRUE ) == FALSE, "p", Count))
+
+names(sz.bound)[6:7] <-
+  c("Organism", "Size_class")  #rename these two columns
+
+lapply(sz.bound[, 1:4], unique)
+```
+
+
+##sizes, near-numeric values
+
+```{r}
+#near-numeric value look like this: "<1" or "28%" or "~34". We want to ideally get rid of these non-number symbols, but only in primary records and not in any kind of "notes" columns. Otherwise, a note that reads "black zone sp= 80% Cyanobacteria plus 5% Verrucaria" will be reduced to "805."
+sz.bound %<>%
+  mutate(sz1=ifelse(grepl("Notes|Z|X|Quality", Organism, ignore.case = FALSE)==FALSE & grepl("[^0-9.]", Count)==TRUE & grepl("p", Count)==FALSE, gsub("[^0-9.]", "", Count), Count))
+
+sz.diff <- sz.bound %>% filter(Count!=sz1)
+```
+
+
+##sizes, NAs evaluation
+
+```{r}
+#first we compute the row_sum
+sz.sum <- sz.bound %>%
+  mutate(Count = ifelse(grepl("[^0-9.]", Count) == TRUE, 0.3, Count)) %>%
+  group_by(Year, Transect, Level, Replicate) %>%
+  dplyr::summarise(sz_row_sum=sum(as.numeric(Count), na.rm=TRUE)) %>%
+  left_join(pc.sum, by=c("Year", "Transect", "Level", "Replicate"))
+
+sz.bound <- left_join(sz.bound, sz.sum, by=c("Year", "Transect", "Level", "Replicate"))
+
+sz.bound %<>%
+  mutate(sz2=ifelse(is.na(sz1)==FALSE & sz1 != "", sz1, ifelse(Data_taken=="yes" | sz_row_sum>0.0001 | pc_row_sum>0.0001, 0, NA))) %>%
+  select(1:7, 12) %>%
+  dplyr::rename("Count_size" = "sz2")
+```
+ 
+ 
+##sizes. Evaluating and correcting for weirdnesses. 
+
+"case1": raw counts were only recorded in the "counts" tab and percentages in "sizes" tab (probably most datasheets prior to 2010).
+or the other way around, "case2": raw counts recorded in the "sizes" tab but no total in "counts" tab (happens in some if not most 2011-2017 sheets)
+
+```{r}
+#summing all size classes of a given species in one row.
+sz.sum.spp <- sz.bound %>%
+  group_by(Year, Transect, Level, Replicate, Organism) %>%
+  dplyr::summarise(sp_sum = sum(as.numeric(Count_size), na.rm = TRUE))
+
+#joining sz.bound (cleaned size class data), sz.sum.spp (species-specific sums), and ct.bound (cleaned counts data)
+sz.test <-
+  left_join(
+    left_join(
+      sz.bound,
+      sz.sum.spp,
+      by = c("Year", "Transect", "Level", "Replicate", "Organism")
+    ),
+    ct.bound,
+    by = c("Year", "Transect", "Level", "Replicate", "Organism")
+  ) %>%
+  mutate(Count_size_fixed = ifelse((
+    #conditionally make new column based on following set of conditions
+    abs(as.numeric(Count) - sp_sum) >= 0.05 * as.numeric(Count) &
+      # if absolute difference between sp_sum and count is larger than 5% of the count AND
+      (sp_sum >= 50 &
+         sp_sum <= 150) & #sp_sum is between 50 and 150 AND
+      Year <= 2010 & # the year is before or on 2010 AND
+      as.numeric(Count) > 0.1 # and the count is not zero. this is to prevent making change to "case2" rows as described above.
+  ),
+  # if all these conditions are satisfied then we are fairly sure that case1 is happening
+  as.numeric(Count_size) * as.numeric(Count) / 100,
+  # THEN make value of new column Count_raw to be percentage (Count_size) multiplied by total count (Count) divided over 100
+  ifelse(Count %in% c(NA, "", " "), Count_size, Count_size) # OTHERWISE keep original value in Count_size
+  )) %>%
+  mutate(Count_total_fixed = ifelse(
+    !(sp_sum %in% c(0, NA)) &
+      # here we account for cases2. If sp_sum is NOT NA nor 0 AND
+      (Count %in% c(0, NA)), # total count is either 0 or NA
+    ifelse(Year > 2010, sp_sum, "p"), # if the year is after 2010, then fill in the sum of species size counts in total counts, otherwise (year is before 2010) put "p"
+    Count # if nothing is satisfied then just fill in the original value
+  )) %>% # Count is either 0 or NA, THEN fill in species sums for Counts, otherwise keep original value.
+  mutate(
+    Count_size_fixed = ifelse(
+      Count_total_fixed == "p" &
+        Count_total_fixed != Count,
+      ifelse(Count_size != 0, "p", 0),
+      Count_size_fixed
+    ) # here we fill in "p" values for the size class data, whose corresponding total counts got turned into "p" above
+  )
+
+#make new dataframe of only rows that were changed in above process. Quality check.
+sz.test.diff <-
+  sz.test %>% filter(Count_size_fixed != Count_size |
+                       Count_total_fixed != Count)
+```
+
+```{r}
+ct.final <- left_join(ct.bound, sz.test[, c(1:5, 6, 13)], by=c("Year", "Transect", "Level", "Replicate", "Organism")) %>%
+  mutate(Count = ifelse(grepl("semi|myti|modi|nuce", Organism) == TRUE & is.na(Count_total_fixed)==TRUE, Count_total_fixed, Count)) %>%
+  select(1:7) %>%
+  distinct()
+ 
+
+sz.final <- sz.test %>%
+  drop_na(Organism) %>%
+  group_by(Year, Transect, Level, Replicate, Data_taken.x, Organism, Size_class) %>%
+  summarise(Count=max(Count_size_fixed))
+
+sz.notes <- sz.final %>%
+  filter(grepl("Notes|Quality", Organism)==TRUE, is.na(Count)==FALSE, Count != 0) %>%
+  select(-7) %>%
+  mutate(Source="Size_class")
+```
+
+
+## sizes, writing to files
+
+```{r sz_write}
+write.csv(sz.final %>% filter(grepl("Note|Quality|Total", Organism)==FALSE), file="sizes_data.csv", row.names=FALSE)
+write.csv(ct.final %>% filter(grepl("Note|Quality|Total", Organism) == FALSE), file="counts_data.csv", row.names=FALSE)
+```
+
+-----------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------
+#Categories
+##categories, all data post 2008
+```{r cg_post}
+#set working directory
+setwd("./post_2008")
+
+cg.post <- lapply(lapply(data.list, read_excel, sheet=4), melt, id.vars=1:5) %>%
+  rbindlist()
+```
+
+##categories, priority transects pre 2008 (in place of a Hal's compilation since there wasn't one for Categories)
+```{r cg_pri_pre}
+cg.early.list <- list.files(path=paste(getwd(), "/categories_priority_pre", sep=""), pattern="Intertidal")
+
+#run this chunk altogether to avoid setwd() resetting
+setwd(paste(getwd(), "/categories_priority_pre", sep=""))
+
+cg.early.long <- lapply(lapply(cg.early.list, read_excel, sheet=4), melt, id.vars=1:2) %>%
+  rbindlist() %>%
+  mutate(Transect = substring(`QUADCODE`, 2, 3), Level = substring(`QUADCODE`, 5, 6), Replicate = substring(`QUADCODE`, 8, 9), Data_taken = NA) %>%
+  select(1, 5:8, 3:4) %>%
+  filter(grepl("^[0-9]", YEAR)==TRUE)
+```
+
+##categories, leftovers, non-priority transects pre 2008
+```{r cg_non_pri}
+#run this chunk altogether to avoid setwd() resetting
+setwd(paste(getwd(), "/leftover_transects", sep=""))
+
+cg.left.long <- lapply(lapply(leftovers, read_excel, sheet=4), melt, id.vars=1:2) %>%
+  rbindlist() %>%
+  mutate(Transect = substring(`QUADCODE`, 2, 3), Level = substring(`QUADCODE`, 5, 6), Replicate = substring(`QUADCODE`, 8, 8), Data_taken = NA) %>%
+  select(1, 5:8, 3:4)
+```
+
+##categories, joining and summarizing
+```{r cg_final}
+cg.bound <-
+  rbindlist(list(cg.early.long, cg.left.long, cg.post), use.names = FALSE) %>% #binding the three sections together
+  setNames(nm = c(
+    "Year",
+    "Transect",
+    "Level",
+    "Replicate",
+    "Data_taken",
+    "Organism",
+    "Category"
+  )) %>% #rename all columns
+  drop_na(Year, Transect, Level, Organism) %>% #dropping rows with NAs in columns where doing so shouldn't drop any actual data
+  mutate(
+    Year = as.numeric(Year),
+    Transect = as.numeric(Transect),
+    Level = as.numeric(Level)
+  ) %>%
+  mutate(Data_taken = ifelse(
+    grepl("y", Data_taken, ignore.case = TRUE) == TRUE,
+    "yes",
+    ifelse(
+      grepl("n", Data_taken, ignore.case = TRUE) == TRUE,
+      "no",
+      Data_taken
+    )
+  )) %>% #standardizing Data_taken codes
+  mutate(Category = ifelse(Category == "nd", "p", Category))
+```
+
+##categories, non- and near-numeric values. DO NOT run this chunk, since we are not removing the non-numeric characters in categories data. too much mess
+
+```{r}
+#near-numeric value look like this: "<1" or "28%" or "~34". We want to ideally get rid of these non-number symbols, but only in primary records and not in any kind of "notes" columns. Otherwise, a note that reads "black zone sp= 80% Cyanobacteria plus 5% Verrucaria" will be reduced to "805."
+cg.bound %<>%
+  mutate(cg1=ifelse(grepl("Notes|Z|X", Organism, ignore.case = FALSE)==FALSE & grepl("[^0-9.]", Category)==TRUE, gsub("[^0-9.]", "", Category), Category))
+
+cg.diff <- cg.bound %>% filter(Category!=cg1)
+```
+
+```{r}
+#NAs evaluation
+cg.sum <- cg.bound %>%
+  group_by(Year, Transect, Level, Replicate) %>%
+  dplyr::summarise(cg_row_sum=sum(as.numeric(Category), na.rm=TRUE))%>%
+  left_join(pc.sum, by=c("Year", "Transect", "Level", "Replicate"))
+
+cg.bound <- left_join(cg.bound, cg.sum, by=c("Year", "Transect", "Level", "Replicate"))
+
+cg.bound %<>%
+  mutate(cg2=ifelse(is.na(Category)==FALSE, Category, ifelse(Data_taken %in% c("Yes", "yes", "Y", "y") | cg_row_sum>0.0001 | pc_row_sum>0.0001, 0, NA)))%>%
+  select(1:6, 10) %>%
+  dplyr::rename(Category = cg2)
+```
+
+#categories, taxa match & consolidation
+```{r}
+cg.org <- read_excel("./all_organism_list.xlsx", sheet=2, skip = 1)
+
+cg.bound %<>%
+  left_join(cg.org[, 1:2], by=c("Organism"="original_code")) %>%
+  mutate(Organism=ifelse(is.na(preferred_code)==FALSE, preferred_code, NA)) %>%
+  drop_na(Organism) %>%
+  select(-8)
+```
+
+```{r cg_write}
+#writing to csv file
+write.csv(cg.bound %>% filter(grepl("Note|Quality|Total", Organism)==FALSE), file="categories_data.csv", row.names=FALSE)
+```
+
+---------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------
+
+# Largest_size for Ascophyllum and Fucus
+
+```{r}
+#set working directory
+setwd("./post_2008")
+
+mx.post <- lapply(lapply(data.list, read_excel, sheet=2, skip=1), `[`, c(1:9)) %>%
+  rbindlist()
+```
+
+```{r}
+mx.early <-
+  read_excel("./Hal_compilations/AllFMBETransectData(Sizes)(Sort17Mar09)(hw).xls",
+             skip = 1)[, c(1:10)] %>%
+  drop_na(1) %>%
+  select(1, 3:6, 9:10, 7:8)
+```
+
+```{r}
+setwd(paste(getwd(), "/leftover_transects", sep=""))
+
+mx.left <- lapply(lapply(leftovers, read_excel, sheet = 2, skip = 1), `[`, c(1:6)) %>%
+  rbindlist() %>%
+  mutate(
+    Transect = substring(`X__2`, 2, 3),
+    Level = substring(`X__2`, 5, 6),
+    Replicate = substring(`X__2`, 8, 9),
+    Data_taken = NA
+  ) %>%
+  select(1, 7:10, 5:6, 3:4)
+```
+
+```{r}
+mx.bound <- rbindlist(list(mx.left, mx.early, mx.post)) %>%
+  setNames(
+    nm = c(
+      "Year",
+      "Transect",
+      "Level",
+      "Replicate",
+      "Data_taken",
+      "Fucus_maxlength",
+      "Fucus_max_species",
+      "Asco_maxlength",
+      "Asco_maxbladders"
+    )
+  ) %>%
+  mutate(
+    Fucus_max_species_fixed = ifelse(
+      is.na(Fucus_max_species) == TRUE |
+        grepl("/|;|,|&|or", Fucus_max_species) == TRUE,
+                  Fucus_max_species,
+        ifelse(grepl("FD|di|ede", Fucus_max_species, ignore.case = TRUE) == TRUE,
+      "Fucus distichus",
+      ifelse(
+        grepl("FV|ves|vis|ver", Fucus_max_species, ignore.case = TRUE) == TRUE,
+        "Fucus vesiculosus",
+        ifelse(
+          grepl("FS|spi", Fucus_max_species, ignore.case = TRUE) == TRUE,
+          "Fucus spiralis",
+          ifelse(
+            grepl("sp.|spp|nd|?", Fucus_max_species) == TRUE,
+            "Fucus spp.",
+            Fucus_max_species
+          )
+        )
+      )
+    )
+  )) %>%
+  mutate(
+    Fucus_maxlength_fixed = ifelse(
+      grepl("in", Fucus_maxlength)==TRUE,
+      as.numeric(gsub("[^0-9.]", "", Fucus_maxlength))*2.54,
+      ifelse(
+        grepl("cm", Fucus_maxlength)==TRUE,
+        gsub("[^0-9.]", "", Fucus_maxlength),
+      Fucus_maxlength)
+    ), 
+    Asco_maxlength_fixed = ifelse(
+      grepl("in", Asco_maxlength)==TRUE,
+      as.numeric(gsub("[^0-9.]", "", Asco_maxlength))*2.54,
+      ifelse(
+        grepl("cm", Asco_maxlength)==TRUE,
+        gsub("[^0-9.]", "", Asco_maxlength),
+      Asco_maxlength)
+    )) %>%
+  mutate(Data_taken = ifelse(
+    grepl("y", Data_taken, ignore.case = TRUE) == TRUE,
+    "yes",
+    ifelse(
+      grepl("n", Data_taken, ignore.case = TRUE) == TRUE,
+      "no",
+      Data_taken
+    ))) %>%
+  select(1:5, 9:12) %>%
+  dplyr::rename(Fucus_max_species=Fucus_max_species_fixed, Fucus_maxlength=Fucus_maxlength_fixed, Asco_maxlength=Asco_maxlength_fixed)
+```
+
+```{r}
+write.csv(mx.bound, file="fucus_asco_max_size.csv", row.names=FALSE)
+```
+
+
+----------
+#stitching all notes together
+```{r}
+all_notes <- rbindlist(list(pc.notes, ct.notes, sz.notes)) %>%
+  dplyr::rename(Note_header = Organism, Note_value = Percent_cover)
+
+write.csv(all_notes, file="notes.csv")
+```
+
