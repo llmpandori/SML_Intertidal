@@ -24,12 +24,77 @@
 
 library(readxl)
 library(janitor)
+library(reshape2)
+library(data.table)
 library(tidyverse)
 
 ##### presets (file locations, save locations, figure theme) #####
 
 edi_file <- './data/edi_update_data_2021/edi/'
 to_add <- './data/edi_update_data_2021/to_add/'
+needs_process <- './data/edi_update_data_2021/needs_processing_2020/'
+
+##### process 2020 size class and count data #####
+
+# load data and pivot longer
+
+# percent cover data for 2020 
+cover_20 <- map(
+  # generate list of files to add
+  list.files(path = needs_process, pattern = 'Transect', 
+             # full file path + all files
+             all.files= T, full.names = T),
+  # read 4th sheet of excel file (category data)
+  read_xlsx, sheet = 1) %>%
+  # remove "notes" columns
+  map(select, -Notes) %>%
+  map(pivot_longer, cols = -c(1:5), names_to = 'Organism', 
+      values_to = 'Percent_cover') %>%
+  # join list of data frames by common columns
+  reduce(full_join, by = c("YEAR", "TRANSECT", "LEVEL", 
+                           "REPLICATE", "DATA TAKEN?", 
+                           "Organism", "Percent_cover")) %>%
+  # make percent cover numeric
+  mutate(Percent_cover = as.numeric(Percent_cover)) %>%
+  select()
+
+# category data for 2020 
+cat_20 <- map(list.files(path = needs_process, pattern = 'Transect', 
+             all.files= T, full.names = T), read_xlsx, sheet = 4) %>%
+# make each organism a column and fill the columns with category values
+map(pivot_longer, cols = -c(1:5), names_to = 'Organism', 
+    values_to = 'Percent_cover') %>%
+  # change the category column to charachter formatting
+  map(mutate, Percent_cover = as.character(Percent_cover)) %>%
+  # join list of data frames by common columns
+  reduce(full_join, by = c("YEAR", "TRANSECT", "LEVEL", 
+                           "REPLICATE", "DATA TAKEN?", 
+                           "Organism", "Percent_cover")) %>%
+  mutate(Percent_cover = as.numeric(Percent_cover))
+
+# make list of spp to include
+spplist <- c("Fucus spiralis *Base", "Fucus Spiralis Base", "Fucus spiralis Base", "Fucus spiralis base", "Modiolus" , "Mytilus", "Sb. balanoides", "Fucus sp. Base", "Fucus vesic Base", "Fucus distichus Base", "Fucus Base", "Ascophyllum Base")
+
+# make a list of years, transects and levels where there should be size data
+# bind cat and cover
+size_list_20 <- rbind(cat_20, cover_20) %>%
+  # filter for size spp (Fucus base, Mytilus, Modiolus, Semibalanus)
+  filter(Organism %in% spplist) %>%
+  # filter for cover > 0 and not NA
+  filter(!is.na(Percent_cover) & Percent_cover > 0) %>%
+  # get first word of organism (to get genus)
+  mutate(Organism = if_else(word(Organism) == 'Sb.', 
+                            'Semibalanus', word(Organism))) %>%
+  # to remove redundancy, get rid of duplicate entries
+  select(YEAR, TRANSECT, LEVEL, Organism) %>%
+  distinct()
+         
+# pull and bind size data
+size_20 <- map(list.files(path = needs_process, pattern = 'Transect', 
+                         all.files= T, full.names = T), 
+                read_xlsx, sheet = 2, skip = 1) %>%
+  
+
 
 ##### category #####
 
@@ -37,7 +102,7 @@ to_add <- './data/edi_update_data_2021/to_add/'
 cat_edi <- read_csv(paste0(edi_file, 'categories_data.csv'),
                          col_types = cols(Replicate = col_character()))
 
-# rgenerate list of dataframes to add to edi data
+# generate list of dataframes to add to edi data
 cat_add <- map(
                 # generate list of files to add
                 list.files(path = to_add, pattern = 'Transect', 
@@ -47,18 +112,50 @@ cat_add <- map(
                 read_xlsx, sheet = 4)
 
 # tidy category data
+cat_add <- cat_add %>%
+  # make each organism a column and fill the columns with category values
+  map(pivot_longer, cols = -c(1:5), names_to = 'Organism', 
+      values_to = 'Category') %>%
+  # change the category column to charachter formatting
+  map(mutate, Category = as.character(Category)) %>%
+  # join list of data frames by common columns
+  reduce(full_join, by = c("YEAR", "TRANSECT", "LEVEL", 
+                           "REPLICATE", "DATA TAKEN?", 
+                           "Organism", "Category"))
+
+# more data tidying after making a df
+cat_add <- cat_add %>%
+  # remove places where the entire row or column consists of 'NA'
+  # remove_empty(which = c('rows', 'cols')) %>%
+  # make column names consistent with cat_edi data
+  rename(Year = YEAR, Transect = TRANSECT, Level = LEVEL, 
+         Replicate = REPLICATE, Data_taken = `DATA TAKEN?`) %>%
+  # make data taken column consistent
+  # if the first letter is 'y', then 'yes'
+  # if first letter is 'n', then 'no'
+  mutate(Data_taken = case_when(
+    tolower(substr(Data_taken,1,1)) == 'y' ~ 'yes',
+    tolower(substr(Data_taken,1,1)) == 'n' ~ 'no')) %>%
+  # reduce duplicate species columns
+  mutate(Organism = case_when(
+    # un-abbreviate semibalanus and botryllus
+    substr(Organism, 1,9) == 'Botryllus' ~ 'Botryllus schlosseri',
+    Organism == 'Sb. balanoides' ~ 'Semibalanus balanoides',
+    # fix inconsistent capitalization
+    tolower(Organism) == 'fucus base' ~ 'Fucus base',
+    tolower(Organism) == 'bare rock' ~ 'bare rock',
+    # if not included in above, keep original entry
+    T ~ Organism
+    ))
+
+# What to do with genus w/o species? e.g. Electra vs Electra pilosa 
+
+# remove emtpy rows or errant rows
 cat_add2 <- cat_add %>%
-  # remove completely empty rows or columns
-  map(., remove_empty, which = c('rows', 'cols')) %>%
-  map(., mutate_all, as.character)
-  # pivot longer so that Organism contains taxonomic info and Category contains the cover estimate
-
-# make list of column names in first 5 columns (ID columns)  
-col_list <- unique(unlist(map(map(cat_add2, select, 1:5), colnames)))
-
-spp_cols <- unique(unlist(map(map(cat_add2, select, !1:5), colnames)))
-
-cat3 <- map(cat_add2, pivot_longer, cols %in% spp_cols, 
-            names_to = 'Organism', values_to = 'Category')
+  # remove rows where NA values shouldn't have data
+  filter(!is.na(Year) & !is.na(Transect) & !is.na(Level))
+  
+  
+View(filter(cat_add, is.na(Year) | is.na(Transect) | is.na(Level)))
 
 ##### 
