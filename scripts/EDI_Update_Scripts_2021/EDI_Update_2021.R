@@ -5,6 +5,8 @@
 # last edited: 7/24/22
 ###############################################
 
+# overarching thing -- find things that need to be added to the org master lsit
+
 ##### Introduction #####
 
 # This script was written in the summer of 2022 by Lauren Pandori, SML Rocky Intertidal Intern Mentor. This script is based on a script developed by An T Nguyen (EDI Environmental Data Fellow at Shoals Marine Lab in 2018). An's script is available in this repo - 'Cleaning_script.Rmd'. Please email llmpandori@gmail.com with any questions/issues. 
@@ -32,6 +34,15 @@ library(tidyverse)
 
 edi_file <- './data/edi_update_data_2021/edi/'
 to_add <- './data/edi_update_data_2021/to_add/'
+new_edi_file <- './data/edi_update_data_2021/edi_update/'
+
+##### species list #####
+
+# read in species list file and find entries that don't yet exist
+spp_list <- read_excel("data/edi_update_data_2021/species_list_2021.xlsx")%>%
+  select(name, valid_name) 
+
+#spp_list <- c(spp_list$name, spp_list$valid_name) %>% unique()
 
 ##### category #####
 
@@ -40,9 +51,7 @@ cat_edi <- read_csv(paste0(edi_file, 'categories_data.csv'),
                          col_types = cols(Replicate = col_character()))
 
 # generate list of dataframes to add to edi data
-cat_add <- map(
-                # generate list of files to add
-                list.files(path = to_add, pattern = 'Transect', 
+cat_add <- map(list.files(path = to_add, pattern = 'Transect', 
                            # full file path + all files
                            all.files= T, full.names = T),
                 # read 4th sheet of excel file (category data)
@@ -58,41 +67,248 @@ cat_add <- cat_add %>%
   # join list of data frames by common columns
   reduce(full_join, by = c("YEAR", "TRANSECT", "LEVEL", 
                            "REPLICATE", "DATA TAKEN?", 
-                           "Organism", "Category"))
-
-# more data tidying after making a df
-cat_add <- cat_add %>%
-  # remove places where the entire row or column consists of 'NA'
-  # remove_empty(which = c('rows', 'cols')) %>%
-  # make column names consistent with cat_edi data
+                           "Organism", "Category")) %>%
+  # make column names consistent with cat_edi
   rename(Year = YEAR, Transect = TRANSECT, Level = LEVEL, 
-         Replicate = REPLICATE, Data_taken = `DATA TAKEN?`) %>%
-  # make data taken column consistent
-  # if the first letter is 'y', then 'yes'
-  # if first letter is 'n', then 'no'
+         Replicate = REPLICATE, Data_taken = `DATA TAKEN?`)
+
+# save notes to add to notes db (entries w/o notes removed)
+notes <- cat_add %>%
+  filter(Organism == 'Notes') %>%
+  pivot_wider(names_from = 'Organism', values_from = 'Category') %>%
+  filter(!is.na(Notes) & Notes != 'NA' & Notes != 0) %>%
+  mutate(Source = 'category')
+
+# remove notes from cat_add
+cat_add <- cat_add %>%
+  filter(Organism != 'Notes')
+
+# join edi and new data
+cat <- rbind(cat_add, cat_edi) %>%
+  # consistent formatting for yes/no in Data_taken column
   mutate(Data_taken = case_when(
     tolower(substr(Data_taken,1,1)) == 'y' ~ 'yes',
-    tolower(substr(Data_taken,1,1)) == 'n' ~ 'no')) %>%
-  # reduce duplicate species columns
-  mutate(Organism = case_when(
-    # un-abbreviate semibalanus and botryllus
-    substr(Organism, 1,9) == 'Botryllus' ~ 'Botryllus schlosseri',
-    Organism == 'Sb. balanoides' ~ 'Semibalanus balanoides',
-    # fix inconsistent capitalization
-    tolower(Organism) == 'fucus base' ~ 'Fucus base',
-    tolower(Organism) == 'bare rock' ~ 'bare rock',
-    # if not included in above, keep original entry
-    T ~ Organism
-    ))
-
-# What to do with genus w/o species? e.g. Electra vs Electra pilosa 
-
-# remove emtpy rows or errant rows
-cat_add2 <- cat_add %>%
-  # remove rows where NA values shouldn't have data
-  filter(!is.na(Year) & !is.na(Transect) & !is.na(Level))
+    tolower(substr(Data_taken,1,1)) == 'n' ~ 'no',
+    T ~ Data_taken)) 
   
-  
-View(filter(cat_add, is.na(Year) | is.na(Transect) | is.na(Level)))
+# 
 
-##### 
+# write file output
+write_csv(cat, paste0(new_edi_file, 'categories_data.csv'))
+
+# remove extras from df, keep notes to add to notes later
+remove(cat_add, cat_edi)
+
+##### percent cover #####
+
+# read in edi file
+cover_edi <- read_csv(paste0(edi_file, 'percent_cover_data.csv'),
+                    col_types = cols(Replicate = col_character(),
+                                     Percent_cover = col_character(
+                                     )))
+
+# generate list of dataframes to add to edi data
+cover_add <- map(list.files(path = to_add, pattern = 'Transect', 
+                          # full file path + all files
+                          all.files= T, full.names = T),
+               # read 4th sheet of excel file (category data)
+               read_xlsx, sheet = 1)
+
+# tidy category data
+cover_add <- cover_add %>%
+  # make all columns as character
+  map(mutate_all, as.character) %>%
+  # make each organism a column and fill the columns with category values
+  map(pivot_longer, cols = -c(1:5), names_to = 'Organism', 
+      values_to = 'Percent_cover') %>%
+  # join list of data frames by common columns
+  reduce(full_join, by = c("YEAR", "TRANSECT", "LEVEL", 
+                           "REPLICATE", "DATA TAKEN?", 
+                           "Organism", "Percent_cover")) %>%
+  # make column names consistent with cat_edi
+  rename(Year = YEAR, Transect = TRANSECT, Level = LEVEL, 
+         Replicate = REPLICATE, Data_taken = `DATA TAKEN?`)
+
+# save notes to add to notes db (entries w/o notes removed)
+notes <- rbind(notes, cover_add %>%
+  filter(Organism == 'Notes') %>%
+  pivot_wider(names_from = 'Organism', values_from = 'Percent_cover') %>%
+  filter(!is.na(Notes) & Notes != 'NA' & Notes != 0) %>%
+    mutate(Source = 'percent_cover'))
+  
+# remove notes from cat_add
+cover_add <- cover_add %>%
+  filter(Organism != 'Notes')
+
+# some column smithing before joining
+
+# join edi and new data
+cover <- rbind(mutate(cover_add,
+                      Year = as.numeric(Year),
+                      Transect = as.numeric(Transect),
+                      Level = as.numeric(Level)), cover_edi)
+
+# more changing?
+
+# write file output
+write_csv(cover, paste0(new_edi_file, 'percent_cover_data.csv'))
+
+remove(cover_add, cover_edi)
+
+##### counts - invertebrates #####
+
+# read in edi file
+counts_edi <- read_csv(paste0(edi_file, 'counts_data.csv'),
+                      col_types = cols(Replicate = col_character()))
+
+# generate list of dataframes to add to edi data
+counts_add <- map(list.files(path = to_add, pattern = 'Transect', 
+                            # full file path + all files
+                            all.files= T, full.names = T),
+                 # read 4th sheet of excel file (category data)
+                 read_xlsx, sheet = 3)
+
+# tidy category data
+counts_add <- counts_add %>%
+  # make all columns as character
+  map(mutate_all, as.character) %>%
+  # make each organism a column and fill the columns with category values
+  map(pivot_longer, cols = -c(1:5), names_to = 'Organism', 
+      values_to = 'Count') %>%
+  # join list of data frames by common columns
+  reduce(full_join, by = c("YEAR", "TRANSECT", "LEVEL", 
+                           "REPLICATE", "DATA TAKEN?", 
+                           "Organism", "Count")) %>%
+  # make column names consistent with cat_edi
+  rename(Year = YEAR, Transect = TRANSECT, Level = LEVEL, 
+         Replicate = REPLICATE, Data_taken = `DATA TAKEN?`)
+
+# save notes to add to notes db (entries w/o notes removed)
+notes <- rbind(notes, counts_add %>%
+                 filter(Organism == 'Notes') %>%
+                 pivot_wider(names_from = 'Organism', values_from = 'Count') %>%
+                 filter(!is.na(Notes) & Notes != 'NA' & Notes != 0) %>%
+                 mutate(Source = 'counts'))
+
+# remove notes from cat_add
+counts_add <- counts_add %>%
+  filter(Organism != 'Notes')
+
+# some column smithing before joining
+
+# join edi and new data
+counts<- rbind(mutate(counts_add,
+                      Year = as.numeric(Year),
+                      Transect = as.numeric(Transect),
+                      Level = as.numeric(Level)), counts_edi)
+
+# more changing?
+
+# write file output
+write_csv(counts, paste0(new_edi_file, 'counts_data.csv'))
+
+remove(ccounts_add, counts_edi)
+
+##### sizes - prep algae + invert sizes #####
+
+sizes_edi <- read_csv(paste0(edi_file, 'sizes_data.csv'),
+                         col_types = cols(Replicate = col_character())) %>%
+  rename(Data_taken = Data_taken.x)
+
+algae_edi <- read_csv(paste0(edi_file, 'fucus_asco_max_size.csv'),
+                      col_types = cols(Replicate = col_character()))
+
+# generate list of dataframes to add to edi data
+sizes_add <- map(list.files(path = to_add, pattern = 'Transect', 
+                             # full file path + all files
+                             all.files= T, full.names = T),
+                  # read 4th sheet of excel file (category data)
+                  read_xlsx, sheet = 2, skip = 1)
+
+# in the older version, the > 50's were still > 30's
+# do we want to change or keep same?
+size_col_names <- c("Year", "Transect", "Level", "Replicate", "Data_taken",
+                'Fucus_maxlength', 'Fucus_max_species', 
+                'Asco_maxlength','Asco_maxbladders',
+                "Semibalanus balanoides_0-2", "Semibalanus balanoides_3-5",
+                "Semibalanus balanoides_>5", "Mytilus edulis_0-5", 
+                "Mytilus edulis_6-10", "Mytilus edulis_11-20",
+                "Mytilus edulis_21-30","Mytilus edulis_>30",
+                "Mytilus edulis_>50","Modiolus modiolus_0-5",
+                "Modiolus modiolus_6-10","Modiolus modiolus_11-20",
+                "Modiolus modiolus_21-30","Modiolus modiolus_>30",
+                "Modiolus modiolus_>50","Nucella lapillus_0-10",
+                "Nucella lapillus_11-20","Nucella lapillus_>20",
+                'Notes')
+
+sizes_add <- sizes_add %>%
+  # make colnames consistent
+  map(setNames, nm = size_col_names)
+
+##### algae size data #####
+
+algae_add <- sizes_add %>%
+  map(select, c(1:9)) %>%
+  reduce(full_join, by = c("Year", "Transect", "Level", "Replicate",
+                           "Data_taken", "Fucus_maxlength",
+                           "Fucus_max_species", "Asco_maxlength",
+                           "Asco_maxbladders")) %>%
+  mutate(across(Year:Replicate, as.character))
+
+# add algae data to edi data
+algae <- rbind(algae_add, algae_edi)
+
+# write csv with result
+write_csv(algae, paste0(new_edi_file, 'fucus_asco_max_size.csv'))
+
+# remove algae files
+remove(algae, algae_add, algae_edi)
+
+##### invert size data ######
+# work on invert sizes
+invert_add <- sizes_add %>%
+  # remove algae size columns
+  map(select, -c(6:9)) %>%
+  # make each organism a column and fill the columns with category values
+  map(pivot_longer, cols = -c(1:5), names_to = 'Organism', 
+      values_to = 'Count') %>%
+  # join list of data frames by common columns
+  reduce(full_join, by = c("Year", "Transect", "Level", "Replicate", "Data_taken", "Organism", "Count"))
+
+# separate and condense notes
+notes <- rbind(notes,invert_add %>%
+                 filter(Organism == 'Notes') %>%
+                 select(-c(Organism)) %>%
+                 rename(Notes = Count) %>%
+                 filter(!is.na(Notes) & Notes != 'NA' 
+                        & Notes != 0) %>%
+                 mutate(Source = 'sizes'))
+
+# remove notes from cat_add
+invert_add <- invert_add %>%
+  filter(Organism != 'Notes') %>%
+  separate(Organism, into = c('Organism', 'Size_class'), sep = '_') %>%
+  mutate(Replicate = as.character(Replicate))
+
+# join to invert edi data 
+invert <- rbind(sizes_edi, invert_add)
+
+# write csv output
+write_csv(invert, paste0(new_edi_file, 'sizes_data.csv'))
+
+remove(invert, invert_add, sizes_add, sizes_edi, size_col_names)
+         
+##### find spp that aren't on list #####
+
+spp_list_fn <- function(dataset){
+new_spp <- dataset %>%
+  select(Organism) %>%
+  filter(!Organism %in% spp_list) %>%
+  unique()
+return(new_spp)
+}
+
+spp_list_new <- rbind(spp_list_fn(cat), spp_list_fn(counts), spp_list_fn(cover)) %>% unique()
+
+
+
