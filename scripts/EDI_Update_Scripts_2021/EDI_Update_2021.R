@@ -7,7 +7,7 @@
 
 # overarching thing -- find things that need to be added to the org master lsit
 
-##### Introduction #####
+##### introduction #####
 
 # This script was written in the summer of 2022 by Lauren Pandori, SML Rocky Intertidal Intern Mentor. This script is based on a script developed by An T Nguyen (EDI Environmental Data Fellow at Shoals Marine Lab in 2018). An's script is available in this repo - 'Cleaning_script.Rmd'. Please email llmpandori@gmail.com with any questions/issues. 
 
@@ -17,7 +17,7 @@
 # transect_info.csv
 # 
 
-##### Terms and General Notes ##### 
+##### terms and general notes ##### 
 
 # Data Structure : The first 5 columns of each sheet are the "core" columns that describe Year, Transect, Level, Replicate and Data_taken (whether or not data were collected). They represent the information that uniquely identifies one row of data, and are kept intact. 
 
@@ -40,9 +40,8 @@ new_edi_file <- './data/edi_update_data_2021/edi_update/'
 
 # read in species list file and find entries that don't yet exist
 spp_list <- read_excel("data/edi_update_data_2021/species_list_2021.xlsx")%>%
-  select(name, valid_name) 
-
-#spp_list <- c(spp_list$name, spp_list$valid_name) %>% unique()
+  select(name, valid_name) %>%
+  rename(Organism = name)
 
 ##### category #####
 
@@ -89,10 +88,14 @@ cat <- rbind(cat_add, cat_edi) %>%
   mutate(Data_taken = case_when(
     tolower(substr(Data_taken,1,1)) == 'y' ~ 'yes',
     tolower(substr(Data_taken,1,1)) == 'n' ~ 'no',
-    T ~ Data_taken)) 
+    T ~ Data_taken)) %>%
+  # add new formatted names
+  left_join(., spp_list, by = 'Organism') %>%
+  mutate(Organism = if_else(is.na(valid_name), Organism, valid_name)) %>%
+  select(-valid_name) %>%
+  # remove species marked for removal
+  filter(Organism != 'spp_to_remove')
   
-# 
-
 # write file output
 write_csv(cat, paste0(new_edi_file, 'categories_data.csv'))
 
@@ -140,15 +143,27 @@ notes <- rbind(notes, cover_add %>%
 cover_add <- cover_add %>%
   filter(Organism != 'Notes')
 
-# some column smithing before joining
-
-# join edi and new data
+# join edi and new data and tidy
 cover <- rbind(mutate(cover_add,
                       Year = as.numeric(Year),
                       Transect = as.numeric(Transect),
-                      Level = as.numeric(Level)), cover_edi)
-
-# more changing?
+                      Level = as.numeric(Level)), cover_edi) %>%  
+  # consistent formatting for yes/no in Data_taken column
+  mutate(Data_taken = case_when(
+    tolower(substr(Data_taken,1,1)) == 'y' ~ 'yes',
+    tolower(substr(Data_taken,1,1)) == 'n' ~ 'no',
+    T ~ Data_taken)) %>%
+  # add new formatted names
+  left_join(., spp_list, by = 'Organism') %>%
+  mutate(Organism = if_else(is.na(valid_name), Organism, valid_name)) %>%
+  select(-valid_name) %>%
+  # remove species marked for removal
+  filter(Organism != 'spp_to_remove') %>%
+  # resolve places w/ multiple entries for the same taxa
+  distinct() %>%
+  group_by(Year, Transect, Level, Replicate, Organism) %>%
+  summarize(Percent_cover = max(Percent_cover)) %>%
+  ungroup()
 
 # write file output
 write_csv(cover, paste0(new_edi_file, 'percent_cover_data.csv'))
@@ -194,15 +209,26 @@ notes <- rbind(notes, counts_add %>%
 counts_add <- counts_add %>%
   filter(Organism != 'Notes')
 
-# some column smithing before joining
-
 # join edi and new data
 counts<- rbind(mutate(counts_add,
                       Year = as.numeric(Year),
                       Transect = as.numeric(Transect),
-                      Level = as.numeric(Level)), counts_edi)
+                      Level = as.numeric(Level)), counts_edi)%>%  
+  # consistent formatting for yes/no in Data_taken column
+  mutate(Data_taken = case_when(
+    tolower(substr(Data_taken,1,1)) == 'y' ~ 'yes',
+    tolower(substr(Data_taken,1,1)) == 'n' ~ 'no',
+    T ~ Data_taken)) %>%
+  # add new formatted names
+  left_join(., spp_list, by = 'Organism') %>%
+  mutate(Organism = if_else(is.na(valid_name), Organism, valid_name)) %>%
+  select(-valid_name) %>%
+  # remove species marked for removal
+  filter(Organism != 'spp_to_remove') %>%
+  distinct()
 
-# more changing?
+# note - if the count can be parsed as numeric as.numeric(Count) != NA, then  
+# deal w/ overlap issues in numeric data first
 
 # write file output
 write_csv(counts, paste0(new_edi_file, 'counts_data.csv'))
@@ -298,17 +324,14 @@ write_csv(invert, paste0(new_edi_file, 'sizes_data.csv'))
 
 remove(invert, invert_add, sizes_add, sizes_edi, size_col_names)
          
-##### find spp that aren't on list #####
+##### generate species list #####
 
-spp_list_fn <- function(dataset){
-new_spp <- dataset %>%
-  select(Organism) %>%
-  filter(!Organism %in% spp_list) %>%
-  unique()
-return(new_spp)
-}
+spp_list <- read_excel("data/edi_update_data_2021/species_list_2021.xlsx") %>%
+  # remove incorrect names used to convert incorrect values in data
+  select(-name) %>%
+  # get distinct entries
+  distinct() 
 
-spp_list_new <- rbind(spp_list_fn(cat), spp_list_fn(counts), spp_list_fn(cover)) %>% unique()
-
-
+# write csv
+write_csv(spp_list, paste0(new_edi_file,'species_list.csv'))
 
